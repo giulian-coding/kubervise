@@ -10,7 +10,6 @@ import {
   Clock,
   Search,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -25,11 +24,14 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { ProtectedPage } from "@/components/dashboard/protected-page";
 import { PERMISSIONS } from "@/lib/rbac";
 import { useCluster } from "@/lib/context/cluster-context";
+import { getAllEvents, subscribeToSnapshots } from "@/lib/utils/snapshots";
 import { formatDistanceToNow } from "@/lib/utils/date";
-import type { ClusterEvent } from "@/lib/types/database";
+import type { K8sEvent } from "@/lib/types/database";
+
+type EventWithCluster = K8sEvent & { cluster_id: string; cluster_name: string };
 
 export default function EventsPage() {
-  const [events, setEvents] = useState<(ClusterEvent & { cluster_name?: string })[]>([]);
+  const [events, setEvents] = useState<EventWithCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -37,29 +39,8 @@ export default function EventsPage() {
   const { selectedClusterId, selectedCluster, isAllClustersView } = useCluster();
 
   const fetchEvents = async () => {
-    const supabase = createClient();
-
-    let query = supabase
-      .from("cluster_events")
-      .select("*, clusters(name)")
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    // Filter by cluster if one is selected
-    if (selectedClusterId) {
-      query = query.eq("cluster_id", selectedClusterId);
-    }
-
-    const { data, error } = await query;
-
-    if (!error && data) {
-      setEvents(
-        data.map((e) => ({
-          ...e,
-          cluster_name: (e as any).clusters?.name,
-        }))
-      );
-    }
+    const data = await getAllEvents(selectedClusterId || undefined);
+    setEvents(data);
     setIsLoading(false);
     setIsRefreshing(false);
   };
@@ -68,18 +49,11 @@ export default function EventsPage() {
     setIsLoading(true);
     fetchEvents();
 
-    const supabase = createClient();
-    const channel = supabase
-      .channel("events-page")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "cluster_events" },
-        () => fetchEvents()
-      )
-      .subscribe();
+    // Subscribe to snapshot changes
+    const unsubscribe = subscribeToSnapshots(selectedClusterId, fetchEvents);
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [selectedClusterId]);
 
@@ -92,15 +66,15 @@ export default function EventsPage() {
     const matchesSearch =
       !searchQuery ||
       event.message?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.involved_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      event.involvedObject.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       event.reason?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesType = typeFilter === "all" || event.event_type === typeFilter;
+    const matchesType = typeFilter === "all" || event.type === typeFilter;
 
     return matchesSearch && matchesType;
   });
 
-  const warningCount = events.filter((e) => e.event_type === "Warning").length;
+  const warningCount = events.filter((e) => e.type === "Warning").length;
 
   const pageDescription = selectedCluster
     ? `Events in cluster "${selectedCluster.name}"`
@@ -203,11 +177,11 @@ export default function EventsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredEvents.map((event) => (
+          {filteredEvents.map((event, index) => (
             <div
-              key={event.id}
+              key={`${event.cluster_id}-${event.involvedObject.kind}-${event.involvedObject.name}-${index}`}
               className={`rounded-lg border p-4 ${
-                event.event_type === "Warning"
+                event.type === "Warning"
                   ? "border-yellow-500/30 bg-yellow-500/5"
                   : "bg-card"
               }`}
@@ -216,12 +190,12 @@ export default function EventsPage() {
                 <div className="flex items-start gap-3">
                   <div
                     className={`mt-1 p-1.5 rounded-full ${
-                      event.event_type === "Warning"
+                      event.type === "Warning"
                         ? "bg-yellow-500/20"
                         : "bg-blue-500/20"
                     }`}
                   >
-                    {event.event_type === "Warning" ? (
+                    {event.type === "Warning" ? (
                       <AlertTriangle className="size-4 text-yellow-500" />
                     ) : (
                       <Info className="size-4 text-blue-500" />
@@ -229,23 +203,23 @@ export default function EventsPage() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <Badge variant={event.event_type === "Warning" ? "secondary" : "outline"}>
+                      <Badge variant={event.type === "Warning" ? "secondary" : "outline"}>
                         {event.reason}
                       </Badge>
                       <span className="text-sm font-medium">
-                        {event.involved_kind}/{event.involved_name}
+                        {event.involvedObject.kind}/{event.involvedObject.name}
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground">{event.message}</p>
                     <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                       {isAllClustersView && <span>{event.cluster_name}</span>}
-                      <span>{event.involved_namespace}</span>
+                      {event.involvedObject.namespace && <span>{event.involvedObject.namespace}</span>}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap">
                   <Clock className="size-3" />
-                  {formatDistanceToNow(event.created_at)}
+                  {formatDistanceToNow(event.lastTimestamp)}
                 </div>
               </div>
             </div>

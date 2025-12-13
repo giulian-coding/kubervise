@@ -10,7 +10,6 @@ import {
   Plus,
   Box,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -32,39 +31,21 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { ProtectedPage } from "@/components/dashboard/protected-page";
 import { PERMISSIONS, useRBAC, PermissionButton } from "@/lib/rbac";
 import { useCluster } from "@/lib/context/cluster-context";
-import type { Namespace } from "@/lib/types/database";
+import { getAllNamespaces, subscribeToSnapshots } from "@/lib/utils/snapshots";
+import type { K8sNamespace } from "@/lib/types/database";
+
+type NamespaceWithCluster = K8sNamespace & { cluster_id: string; cluster_name: string };
 
 export default function NamespacesPage() {
-  const [namespaces, setNamespaces] = useState<(Namespace & { cluster_name?: string; pod_count?: number })[]>([]);
+  const [namespaces, setNamespaces] = useState<NamespaceWithCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const { can } = useRBAC();
   const { selectedClusterId, selectedCluster, isAllClustersView } = useCluster();
 
   const fetchNamespaces = async () => {
-    const supabase = createClient();
-
-    let query = supabase
-      .from("namespaces")
-      .select("*, clusters(name)")
-      .order("name", { ascending: true });
-
-    // Filter by cluster if one is selected
-    if (selectedClusterId) {
-      query = query.eq("cluster_id", selectedClusterId);
-    }
-
-    const { data, error } = await query;
-
-    if (!error && data) {
-      setNamespaces(
-        data.map((ns) => ({
-          ...ns,
-          cluster_name: (ns as any).clusters?.name,
-          pod_count: Math.floor(Math.random() * 20), // Simulated
-        }))
-      );
-    }
+    const data = await getAllNamespaces(selectedClusterId || undefined);
+    setNamespaces(data);
     setIsLoading(false);
     setIsRefreshing(false);
   };
@@ -73,18 +54,11 @@ export default function NamespacesPage() {
     setIsLoading(true);
     fetchNamespaces();
 
-    const supabase = createClient();
-    const channel = supabase
-      .channel("namespaces-page")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "namespaces" },
-        () => fetchNamespaces()
-      )
-      .subscribe();
+    // Subscribe to snapshot changes
+    const unsubscribe = subscribeToSnapshots(selectedClusterId, fetchNamespaces);
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [selectedClusterId]);
 
@@ -93,11 +67,11 @@ export default function NamespacesPage() {
     fetchNamespaces();
   };
 
-  const getStatusBadge = (status: string | null) => {
+  const getStatusBadge = (status: string) => {
     if (status === "Active") {
       return <Badge variant="default">Active</Badge>;
     }
-    return <Badge variant="secondary">{status ?? "Unknown"}</Badge>;
+    return <Badge variant="secondary">{status}</Badge>;
   };
 
   const isSystemNamespace = (name: string) => {
@@ -169,14 +143,13 @@ export default function NamespacesPage() {
                 <TableHead>Name</TableHead>
                 {isAllClustersView && <TableHead>Cluster</TableHead>}
                 <TableHead>Status</TableHead>
-                <TableHead>Pods</TableHead>
                 <TableHead>Labels</TableHead>
                 <TableHead className="w-[70px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {namespaces.map((ns) => (
-                <TableRow key={ns.id}>
+              {namespaces.map((ns, index) => (
+                <TableRow key={`${ns.cluster_id}-${ns.name}-${index}`}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       {ns.name}
@@ -192,13 +165,22 @@ export default function NamespacesPage() {
                   )}
                   <TableCell>{getStatusBadge(ns.status)}</TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Box className="size-4 text-muted-foreground" />
-                      {ns.pod_count}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-muted-foreground text-sm">-</span>
+                    {Object.keys(ns.labels || {}).length > 0 ? (
+                      <div className="flex gap-1">
+                        {Object.keys(ns.labels).slice(0, 2).map((key) => (
+                          <Badge key={key} variant="outline" className="text-xs">
+                            {key.split("/").pop()}
+                          </Badge>
+                        ))}
+                        {Object.keys(ns.labels).length > 2 && (
+                          <Badge variant="outline" className="text-xs">
+                            +{Object.keys(ns.labels).length - 2}
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">-</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

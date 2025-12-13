@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Server,
-  ArrowLeft,
   RefreshCw,
   Pencil,
   Trash2,
@@ -18,42 +17,36 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ProtectedPage } from "@/components/dashboard/protected-page";
-import { PERMISSIONS, PermissionButton, useRBAC } from "@/lib/rbac";
+import { PERMISSIONS, PermissionButton } from "@/lib/rbac";
+import { getClusterSnapshot, subscribeToSnapshots } from "@/lib/utils/snapshots";
 import { toast } from "sonner";
-import type { Cluster, Node, Pod, ClusterEvent } from "@/lib/types/database";
+import type { Cluster, ClusterSnapshotData, K8sNode, K8sPod, K8sEvent } from "@/lib/types/database";
 
 export default function ClusterDetailPage() {
   const params = useParams();
   const router = useRouter();
   const clusterId = params.id as string;
-  const { can } = useRBAC();
 
   const [cluster, setCluster] = useState<Cluster | null>(null);
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [pods, setPods] = useState<Pod[]>([]);
-  const [events, setEvents] = useState<ClusterEvent[]>([]);
+  const [snapshot, setSnapshot] = useState<ClusterSnapshotData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchData = async () => {
     const supabase = createClient();
 
-    const [clusterRes, nodesRes, podsRes, eventsRes] = await Promise.all([
-      supabase.from("clusters").select("*").eq("id", clusterId).single(),
-      supabase.from("nodes").select("*").eq("cluster_id", clusterId),
-      supabase.from("pods").select("*").eq("cluster_id", clusterId).limit(50),
-      supabase
-        .from("cluster_events")
-        .select("*")
-        .eq("cluster_id", clusterId)
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
+    // Fetch cluster info
+    const { data: clusterData } = await supabase
+      .from("clusters")
+      .select("*")
+      .eq("id", clusterId)
+      .single();
 
-    if (clusterRes.data) setCluster(clusterRes.data);
-    if (nodesRes.data) setNodes(nodesRes.data);
-    if (podsRes.data) setPods(podsRes.data);
-    if (eventsRes.data) setEvents(eventsRes.data);
+    if (clusterData) setCluster(clusterData);
+
+    // Fetch snapshot
+    const snapshotData = await getClusterSnapshot(clusterId);
+    setSnapshot(snapshotData);
 
     setIsLoading(false);
     setIsRefreshing(false);
@@ -62,28 +55,23 @@ export default function ClusterDetailPage() {
   useEffect(() => {
     fetchData();
 
+    // Subscribe to cluster changes
     const supabase = createClient();
-    const channel = supabase
+    const clusterChannel = supabase
       .channel(`cluster-${clusterId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "clusters", filter: `id=eq.${clusterId}` },
         () => fetchData()
       )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "nodes", filter: `cluster_id=eq.${clusterId}` },
-        () => fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pods", filter: `cluster_id=eq.${clusterId}` },
-        () => fetchData()
-      )
       .subscribe();
 
+    // Subscribe to snapshot changes
+    const unsubscribeSnapshots = subscribeToSnapshots(clusterId, fetchData);
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(clusterChannel);
+      unsubscribeSnapshots();
     };
   }, [clusterId]);
 
@@ -136,16 +124,22 @@ export default function ClusterDetailPage() {
     );
   }
 
-  const runningPods = pods.filter((p) => p.status === "Running").length;
-  const pendingPods = pods.filter((p) => p.status === "Pending").length;
-  const failedPods = pods.filter((p) => p.status === "Failed").length;
+  // Extract data from snapshot
+  const nodes: K8sNode[] = snapshot?.nodes || [];
+  const pods: K8sPod[] = snapshot?.pods || [];
+  const events: K8sEvent[] = snapshot?.events || [];
+
+  const runningPods = pods.filter((p) => p.phase === "Running").length;
+  const pendingPods = pods.filter((p) => p.phase === "Pending").length;
+  const failedPods = pods.filter((p) => p.phase === "Failed").length;
   const readyNodes = nodes.filter((n) => n.status === "Ready").length;
+  const warningEvents = events.filter((e) => e.type === "Warning").length;
 
   return (
     <ProtectedPage permission={PERMISSIONS.CLUSTER_VIEW}>
       <PageHeader
         title={cluster.name}
-        description={cluster.api_server_url || "Kubernetes Cluster"}
+        description={cluster.api_endpoint || cluster.description || "Kubernetes Cluster"}
         icon={Server}
         actions={
           <div className="flex items-center gap-2">
@@ -194,6 +188,11 @@ export default function ClusterDetailPage() {
           }`}
         />
         <span className="text-sm capitalize">{cluster.connection_status}</span>
+        {snapshot && (
+          <span className="text-xs text-muted-foreground ml-2">
+            v{snapshot.clusterVersion || "unknown"}
+          </span>
+        )}
       </div>
 
       {/* Stats Grid */}
@@ -219,22 +218,22 @@ export default function ClusterDetailPage() {
         />
         <StatCard
           title="Warnings"
-          value={events.filter((e) => e.event_type === "Warning").length.toString()}
+          value={warningEvents.toString()}
           description="Warning events"
           icon={AlertTriangle}
-          variant={events.filter((e) => e.event_type === "Warning").length > 0 ? "warning" : "default"}
+          variant={warningEvents > 0 ? "warning" : "default"}
         />
       </div>
 
-      {/* Nodes and Pods */}
+      {/* Nodes and Events */}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="rounded-lg border bg-card p-6">
           <h2 className="text-lg font-semibold mb-4">Nodes</h2>
           {nodes.length > 0 ? (
             <div className="space-y-3">
-              {nodes.map((node) => (
+              {nodes.map((node, index) => (
                 <div
-                  key={node.id}
+                  key={`${node.name}-${index}`}
                   className="flex items-center justify-between p-3 rounded-md bg-muted/50"
                 >
                   <div className="flex items-center gap-3">
@@ -258,16 +257,16 @@ export default function ClusterDetailPage() {
           <h2 className="text-lg font-semibold mb-4">Recent Events</h2>
           {events.length > 0 ? (
             <div className="space-y-3">
-              {events.slice(0, 5).map((event) => (
+              {events.slice(0, 5).map((event, index) => (
                 <div
-                  key={event.id}
+                  key={`${event.involvedObject.kind}-${event.involvedObject.name}-${index}`}
                   className={`p-3 rounded-md ${
-                    event.event_type === "Warning" ? "bg-yellow-500/10" : "bg-muted/50"
+                    event.type === "Warning" ? "bg-yellow-500/10" : "bg-muted/50"
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium text-sm">
-                      {event.involved_kind}/{event.involved_name}
+                      {event.involvedObject.kind}/{event.involvedObject.name}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
