@@ -8,7 +8,7 @@ export async function updateSession(request: NextRequest) {
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         getAll() {
@@ -29,34 +29,43 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // Do not run code between createServerClient and supabase.auth.getClaims().
-  // A simple mistake could make it very hard to debug issues with users being randomly logged out.
+  // IMPORTANT: Avoid writing any logic between createServerClient and
+  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
+  // issues with users being randomly logged out.
 
-  // IMPORTANT: If you remove getClaims() and you use server-side rendering
-  // with the Supabase client, your users may be randomly logged out.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims;
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // Redirect unauthenticated users to login page (except for public routes)
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith("/auth") &&
-    request.nextUrl.pathname !== "/"
-  ) {
+  // Protected routes - redirect to login if not authenticated
+  const isAuthRoute = request.nextUrl.pathname.startsWith("/auth");
+  const isPublicRoute = request.nextUrl.pathname === "/" || isAuthRoute;
+
+  if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     return NextResponse.redirect(url);
   }
 
-  // IMPORTANT: You *must* return the supabaseResponse object as it is.
-  // If you're creating a new response object with NextResponse.next() make sure to:
+  // Redirect logged-in users away from auth pages (except logout-related)
+  if (user && isAuthRoute && !request.nextUrl.pathname.includes("/auth/update-password")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
+  }
+
+  // IMPORTANT: You *must* return the supabaseResponse object as it is. If you're
+  // creating a new response object with NextResponse.next() make sure to:
   // 1. Pass the request in it, like so:
   //    const myNewResponse = NextResponse.next({ request })
   // 2. Copy over the cookies, like so:
   //    myNewResponse.cookies.setAll(supabaseResponse.cookies.getAll())
-  // 3. Change the myNewResponse object to fit your needs, but avoid changing the cookies!
+  // 3. Change the myNewResponse object to fit your needs, but avoid changing
+  //    the cookies!
   // 4. Finally:
   //    return myNewResponse
+  // If this is not done, you may be causing the browser and server to go out
+  // of sync and terminate the user's session prematurely!
 
   return supabaseResponse;
 }
