@@ -12,11 +12,28 @@ export async function GET(request: NextRequest) {
   if (token_hash && type) {
     const supabase = await createClient();
 
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       type,
       token_hash,
     });
-    if (!error) {
+
+    if (!error && data.user) {
+      // Check if user needs onboarding
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("onboarding_status")
+        .eq("id", data.user.id)
+        .single();
+
+      // If onboarding pending, redirect to onboarding
+      if (profile?.onboarding_status === "pending") {
+        // Check if there's a specific redirect (like invitation)
+        if (next.includes("/invite")) {
+          redirect(next);
+        }
+        redirect("/onboarding");
+      }
+
       redirect(next);
     } else {
       redirect(`/auth/error?error=${error?.message}`);
