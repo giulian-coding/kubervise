@@ -363,8 +363,8 @@ export default function RBACPage() {
                     {canEditRole(member.role) ? (
                       <Select
                         value={member.role}
-                        onValueChange={(value: TeamRoleType) =>
-                          handleRoleChange(member.id, value)
+                        onValueChange={(value) =>
+                          value && handleRoleChange(member.id, value as TeamRoleType)
                         }
                       >
                         <SelectTrigger className="w-[140px]">

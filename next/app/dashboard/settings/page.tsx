@@ -294,10 +294,10 @@ export default function SettingsPage() {
               <Label>Theme</Label>
               <Select
                 value={userSettings.appearance.theme}
-                onValueChange={(value: "light" | "dark" | "system") =>
-                  setUserSettings({
+                onValueChange={(value) =>
+                  value && setUserSettings({
                     ...userSettings,
-                    appearance: { ...userSettings.appearance, theme: value },
+                    appearance: { ...userSettings.appearance, theme: value as "light" | "dark" | "system" },
                   })
                 }
               >
@@ -368,7 +368,7 @@ export default function SettingsPage() {
                 <Select
                   value={teamSettings.defaultRole}
                   onValueChange={(value) =>
-                    setTeamSettings({ ...teamSettings, defaultRole: value })
+                    value && setTeamSettings({ ...teamSettings, defaultRole: value })
                   }
                 >
                   <SelectTrigger className="w-[200px]">
@@ -406,7 +406,7 @@ export default function SettingsPage() {
                 <Select
                   value={teamSettings.sessionTimeout.toString()}
                   onValueChange={(value) =>
-                    setTeamSettings({
+                    value && setTeamSettings({
                       ...teamSettings,
                       sessionTimeout: parseInt(value),
                     })

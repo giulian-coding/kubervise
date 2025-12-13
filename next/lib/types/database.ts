@@ -388,15 +388,14 @@ export interface DashboardStats {
 }
 
 export interface RecentEvent {
+  id: string;
   cluster_id: string;
   cluster_name: string;
-  type: "Normal" | "Warning";
-  reason: string;
-  message: string;
-  involvedObject: {
-    kind: string;
-    name: string;
-    namespace?: string;
-  };
-  lastTimestamp: string;
+  event_type: "Normal" | "Warning";
+  reason: string | null;
+  message: string | null;
+  involved_kind: string | null;
+  involved_name: string | null;
+  involved_namespace?: string | null;
+  created_at: string;
 }

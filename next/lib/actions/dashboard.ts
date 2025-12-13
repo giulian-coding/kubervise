@@ -5,152 +5,138 @@ import type {
   DashboardStats,
   RecentEvent,
   Cluster,
-  ClusterStatus,
+  ClusterSnapshotData,
 } from "@/lib/types/database";
+
+// Snapshot summary for cluster overview
+interface ClusterSnapshotSummary {
+  nodes: number;
+  pods: number;
+  namespaces: number;
+}
 
 export interface DashboardData {
   stats: DashboardStats;
   recentEvents: RecentEvent[];
-  clusters: (Cluster & { latest_status: ClusterStatus | null })[];
+  clusters: (Cluster & { snapshot_summary: ClusterSnapshotSummary | null })[];
 }
 
 export async function getDashboardData(teamId: string): Promise<DashboardData> {
   const supabase = await createClient();
 
-  // Parallel fetch all data for efficiency
-  const [clustersResult, podsResult, nodesResult, eventsResult] =
-    await Promise.all([
-      // Get clusters with latest status
-      supabase
-        .from("clusters")
-        .select(
-          `
-          *,
-          cluster_status (
-            id,
-            node_count,
-            pod_count,
-            namespace_count,
-            cpu_capacity,
-            memory_capacity,
-            recorded_at
-          )
-        `
-        )
-        .eq("team_id", teamId)
-        .order("created_at", { ascending: false }),
+  // Parallel fetch clusters and snapshots
+  const [clustersResult, snapshotsResult] = await Promise.all([
+    // Get clusters
+    supabase
+      .from("clusters")
+      .select("*")
+      .eq("team_id", teamId)
+      .order("created_at", { ascending: false }),
 
-      // Get pod counts by status
-      supabase
-        .from("pods")
-        .select("status, cluster_id, clusters!inner(team_id)")
-        .eq("clusters.team_id", teamId),
+    // Get snapshots with cluster info
+    supabase
+      .from("cluster_snapshots")
+      .select("cluster_id, snapshot, clusters!inner(name, team_id)")
+      .eq("clusters.team_id", teamId),
+  ]);
 
-      // Get node counts by status
-      supabase
-        .from("nodes")
-        .select("status, cluster_id, clusters!inner(team_id)")
-        .eq("clusters.team_id", teamId),
+  // Build snapshot map
+  const snapshotMap = new Map<string, ClusterSnapshotData>();
+  const clusterNames = new Map<string, string>();
 
-      // Get recent events
-      supabase
-        .from("cluster_events")
-        .select(
-          `
-          id,
-          event_type,
-          reason,
-          message,
-          involved_kind,
-          involved_name,
-          created_at,
-          clusters!inner (
-            name,
-            team_id
-          )
-        `
-        )
-        .eq("clusters.team_id", teamId)
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
+  (snapshotsResult.data || []).forEach((row) => {
+    snapshotMap.set(row.cluster_id, row.snapshot as ClusterSnapshotData);
+    clusterNames.set(row.cluster_id, (row.clusters as any)?.name || "Unknown");
+  });
 
-  // Process clusters
+  // Process clusters with snapshot summaries
   const clusters = (clustersResult.data || []).map((cluster) => {
-    const statusArray = cluster.cluster_status as ClusterStatus[] | null;
-    const latestStatus = statusArray?.length
-      ? statusArray.sort(
-          (a, b) =>
-            new Date(b.recorded_at).getTime() -
-            new Date(a.recorded_at).getTime()
-        )[0]
+    const snapshot = snapshotMap.get(cluster.id);
+    const summary: ClusterSnapshotSummary | null = snapshot
+      ? {
+          nodes: snapshot.summary?.nodes || snapshot.nodes?.length || 0,
+          pods: snapshot.summary?.pods?.total || snapshot.pods?.length || 0,
+          namespaces: snapshot.summary?.namespaces || snapshot.namespaces?.length || 0,
+        }
       : null;
 
     return {
       ...cluster,
-      cluster_status: undefined,
-      latest_status: latestStatus,
-    } as Cluster & { latest_status: ClusterStatus | null };
+      snapshot_summary: summary,
+    } as Cluster & { snapshot_summary: ClusterSnapshotSummary | null };
   });
 
   // Calculate cluster stats
   const clusterStats = {
     total: clusters.length,
-    connected: clusters.filter((c) => c.connection_status === "connected")
-      .length,
-    disconnected: clusters.filter((c) => c.connection_status === "disconnected")
-      .length,
+    connected: clusters.filter((c) => c.connection_status === "connected").length,
+    disconnected: clusters.filter((c) => c.connection_status === "disconnected").length,
     error: clusters.filter((c) => c.connection_status === "error").length,
   };
 
-  // Calculate pod stats
-  const pods = podsResult.data || [];
-  const podStats = {
-    total: pods.length,
-    running: pods.filter((p) => p.status === "Running").length,
-    pending: pods.filter((p) => p.status === "Pending").length,
-    failed: pods.filter((p) => p.status === "Failed").length,
-    succeeded: pods.filter((p) => p.status === "Succeeded").length,
-  };
+  // Aggregate stats from all snapshots
+  let podStats = { total: 0, running: 0, pending: 0, failed: 0, succeeded: 0 };
+  let nodeStats = { total: 0, ready: 0, notReady: 0 };
+  let alertStats = { total: 0, critical: 0, warning: 0 };
+  const allEvents: Array<{ event: ClusterSnapshotData["events"][0]; cluster_id: string; cluster_name: string }> = [];
 
-  // Calculate node stats
-  const nodes = nodesResult.data || [];
-  const nodeStats = {
-    total: nodes.length,
-    ready: nodes.filter((n) => n.status === "Ready").length,
-    notReady: nodes.filter((n) => n.status === "NotReady").length,
-  };
+  snapshotMap.forEach((snapshot, clusterId) => {
+    const clusterName = clusterNames.get(clusterId) || "Unknown";
 
-  // Calculate alerts from warning events
-  const events = eventsResult.data || [];
-  const warningEvents = events.filter((e) => e.event_type === "Warning");
-  const alertStats = {
-    total: warningEvents.length,
-    critical: warningEvents.filter(
-      (e) =>
-        e.reason?.includes("Failed") ||
-        e.reason?.includes("Error") ||
-        e.reason?.includes("OOM")
-    ).length,
-    warning: warningEvents.filter(
-      (e) =>
-        !e.reason?.includes("Failed") &&
-        !e.reason?.includes("Error") &&
-        !e.reason?.includes("OOM")
-    ).length,
-  };
+    // Pod stats
+    if (snapshot.summary?.pods) {
+      podStats.total += snapshot.summary.pods.total;
+      podStats.running += snapshot.summary.pods.running;
+      podStats.pending += snapshot.summary.pods.pending;
+      podStats.failed += snapshot.summary.pods.failed;
+    } else if (snapshot.pods) {
+      podStats.total += snapshot.pods.length;
+      podStats.running += snapshot.pods.filter((p) => p.phase === "Running").length;
+      podStats.pending += snapshot.pods.filter((p) => p.phase === "Pending").length;
+      podStats.failed += snapshot.pods.filter((p) => p.phase === "Failed").length;
+      podStats.succeeded += snapshot.pods.filter((p) => p.phase === "Succeeded").length;
+    }
 
-  // Format recent events
-  const recentEvents: RecentEvent[] = events.slice(0, 5).map((event) => ({
-    id: event.id,
-    cluster_name:
-      (event.clusters as unknown as { name: string })?.name || "Unknown",
-    event_type: event.event_type,
-    reason: event.reason,
-    message: event.message,
-    involved_kind: event.involved_kind,
-    involved_name: event.involved_name,
-    created_at: event.created_at,
+    // Node stats
+    if (snapshot.nodes) {
+      nodeStats.total += snapshot.nodes.length;
+      nodeStats.ready += snapshot.nodes.filter((n) => n.status === "Ready").length;
+      nodeStats.notReady += snapshot.nodes.filter((n) => n.status !== "Ready").length;
+    }
+
+    // Events - collect for sorting
+    if (snapshot.events) {
+      snapshot.events.forEach((event) => {
+        allEvents.push({ event, cluster_id: clusterId, cluster_name: clusterName });
+
+        if (event.type === "Warning") {
+          alertStats.total++;
+          if (["Failed", "FailedScheduling", "Unhealthy", "BackOff", "OOMKilled"].includes(event.reason)) {
+            alertStats.critical++;
+          } else {
+            alertStats.warning++;
+          }
+        }
+      });
+    }
+  });
+
+  // Sort events by timestamp and take most recent 5
+  allEvents.sort((a, b) =>
+    new Date(b.event.lastTimestamp).getTime() - new Date(a.event.lastTimestamp).getTime()
+  );
+
+  const recentEvents: RecentEvent[] = allEvents.slice(0, 5).map((item, index) => ({
+    id: `${item.cluster_id}-${item.event.involvedObject.kind}-${item.event.involvedObject.name}-${index}`,
+    cluster_id: item.cluster_id,
+    cluster_name: item.cluster_name,
+    event_type: item.event.type,
+    reason: item.event.reason,
+    message: item.event.message,
+    involved_kind: item.event.involvedObject.kind,
+    involved_name: item.event.involvedObject.name,
+    involved_namespace: item.event.involvedObject.namespace || null,
+    created_at: item.event.lastTimestamp,
   }));
 
   return {
@@ -168,34 +154,21 @@ export async function getDashboardData(teamId: string): Promise<DashboardData> {
 export async function getClusterDetails(clusterId: string) {
   const supabase = await createClient();
 
-  const [clusterResult, nodesResult, podsResult, statusResult] =
-    await Promise.all([
-      supabase.from("clusters").select("*").eq("id", clusterId).single(),
+  const [clusterResult, snapshotResult] = await Promise.all([
+    supabase.from("clusters").select("*").eq("id", clusterId).single(),
 
-      supabase
-        .from("nodes")
-        .select("*")
-        .eq("cluster_id", clusterId)
-        .order("name"),
+    supabase
+      .from("cluster_snapshots")
+      .select("snapshot, collected_at")
+      .eq("cluster_id", clusterId)
+      .single(),
+  ]);
 
-      supabase
-        .from("pods")
-        .select("*, namespaces(name)")
-        .eq("cluster_id", clusterId)
-        .order("name"),
-
-      supabase
-        .from("cluster_status")
-        .select("*")
-        .eq("cluster_id", clusterId)
-        .order("recorded_at", { ascending: false })
-        .limit(24), // Last 24 data points for chart
-    ]);
+  const snapshot = snapshotResult.data?.snapshot as ClusterSnapshotData | null;
 
   return {
     cluster: clusterResult.data,
-    nodes: nodesResult.data || [],
-    pods: podsResult.data || [],
-    statusHistory: statusResult.data || [],
+    snapshot: snapshot,
+    collectedAt: snapshotResult.data?.collected_at || null,
   };
 }

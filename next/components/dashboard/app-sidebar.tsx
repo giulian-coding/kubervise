@@ -261,7 +261,7 @@ function NavSection({ label, items, userRole, groupPermission }: NavSectionProps
 
             if (item.items) {
               return (
-                <ControlledCollapsible key={item.title} initialOpen={isActive} itemKey={item.title}>
+                <ControlledCollapsible key={item.title} initialOpen={isActive ?? false} itemKey={item.title}>
                   <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
                       <SidebarMenuButton

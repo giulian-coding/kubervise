@@ -51,60 +51,37 @@ export function DashboardContent({ data, teamId }: DashboardContentProps) {
       )
       .subscribe();
 
-    // Subscribe to pod changes
-    const podsChannel = supabase
-      .channel("pods-changes")
+    // Subscribe to snapshot changes (replaces pods and events subscriptions)
+    const snapshotsChannel = supabase
+      .channel("snapshots-changes")
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
-          table: "pods",
+          table: "cluster_snapshots",
         },
         () => {
+          // Refresh stats when any snapshot changes
           refreshStats();
-        }
-      )
-      .subscribe();
-
-    // Subscribe to events
-    const eventsChannel = supabase
-      .channel("events-changes")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "cluster_events",
-        },
-        (payload) => {
-          // Add new event to the list
-          const newEvent = payload.new as RecentEvent;
-          setEvents((prev) => [newEvent, ...prev].slice(0, 5));
         }
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(clustersChannel);
-      supabase.removeChannel(podsChannel);
-      supabase.removeChannel(eventsChannel);
+      supabase.removeChannel(snapshotsChannel);
     };
   }, [teamId]);
 
   const refreshStats = async () => {
     setIsRefreshing(true);
     try {
-      const supabase = createClient();
-
-      // Try to use RPC function for optimized stats
-      const { data: rpcData, error } = await supabase.rpc("get_dashboard_stats", {
-        p_team_id: teamId,
-      });
-
-      if (!error && rpcData) {
-        setStats(rpcData as DashboardStats);
-      }
+      // Re-fetch dashboard data using server action
+      const { getDashboardData } = await import("@/lib/actions/dashboard");
+      const freshData = await getDashboardData(teamId);
+      setStats(freshData.stats);
+      setEvents(freshData.recentEvents);
     } catch (err) {
       console.error("Error refreshing stats:", err);
     } finally {
@@ -247,8 +224,8 @@ export function DashboardContent({ data, teamId }: DashboardContentProps) {
                     <div>
                       <p className="font-medium">{cluster.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {cluster.latest_status
-                          ? `${cluster.latest_status.node_count} nodes, ${cluster.latest_status.pod_count} pods`
+                        {cluster.snapshot_summary
+                          ? `${cluster.snapshot_summary.nodes} nodes, ${cluster.snapshot_summary.pods} pods`
                           : "No data yet"}
                       </p>
                     </div>
