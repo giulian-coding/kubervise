@@ -218,6 +218,178 @@ class SupabaseSync:
             logger.error(f"Fehler beim Hinzufügen des Events: {e}")
             return False
 
+    async def sync_deployments(self, deployments: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """Deployments zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for dep in deployments:
+                namespace_id = namespace_ids.get(dep["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("deployments").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": dep["name"],
+                    "replicas": dep["replicas"],
+                    "ready_replicas": dep["ready_replicas"],
+                    "available_replicas": dep["available_replicas"],
+                    "strategy": dep["strategy"],
+                    "k8s_created_at": dep["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(deployments)} Deployments synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der Deployments: {e}")
+            return False
+
+    async def sync_statefulsets(self, statefulsets: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """StatefulSets zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for sts in statefulsets:
+                namespace_id = namespace_ids.get(sts["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("statefulsets").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": sts["name"],
+                    "replicas": sts["replicas"],
+                    "ready_replicas": sts["ready_replicas"],
+                    "service_name": sts["service_name"],
+                    "k8s_created_at": sts["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(statefulsets)} StatefulSets synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der StatefulSets: {e}")
+            return False
+
+    async def sync_daemonsets(self, daemonsets: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """DaemonSets zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for ds in daemonsets:
+                namespace_id = namespace_ids.get(ds["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("daemonsets").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": ds["name"],
+                    "desired_nodes": ds["desired_nodes"],
+                    "ready_nodes": ds["ready_nodes"],
+                    "k8s_created_at": ds["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(daemonsets)} DaemonSets synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der DaemonSets: {e}")
+            return False
+
+    async def sync_services(self, services: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """Services zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for svc in services:
+                namespace_id = namespace_ids.get(svc["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("services").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": svc["name"],
+                    "type": svc["type"],
+                    "cluster_ip": svc["cluster_ip"],
+                    "external_ip": svc["external_ip"],
+                    "ports": svc["ports"],
+                    "k8s_created_at": svc["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(services)} Services synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der Services: {e}")
+            return False
+
+    async def sync_ingresses(self, ingresses: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """Ingresses zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for ing in ingresses:
+                namespace_id = namespace_ids.get(ing["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("ingresses").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": ing["name"],
+                    "ingress_class": ing["ingress_class"],
+                    "hosts": ing["hosts"],
+                    "tls": ing["tls"],
+                    "address": ing["address"],
+                    "k8s_created_at": ing["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(ingresses)} Ingresses synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der Ingresses: {e}")
+            return False
+
+    async def sync_jobs(self, jobs: List[Dict], namespace_ids: Dict[str, str]) -> bool:
+        """Jobs zu Supabase synchronisieren"""
+        if not self.connected or not self.client:
+            return False
+
+        try:
+            for job in jobs:
+                namespace_id = namespace_ids.get(job["namespace"])
+                if not namespace_id:
+                    continue
+
+                self.client.table("jobs").upsert({
+                    "cluster_id": self.cluster_id,
+                    "namespace_id": namespace_id,
+                    "name": job["name"],
+                    "completions": job["completions"],
+                    "succeeded": job["succeeded"],
+                    "failed": job["failed"],
+                    "active": job["active"],
+                    "status": job["status"],
+                    "k8s_created_at": job["created"],
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="cluster_id,namespace_id,name").execute()
+
+            logger.debug(f"{len(jobs)} Jobs synchronisiert")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Synchronisieren der Jobs: {e}")
+            return False
+
     async def set_disconnected(self) -> bool:
         """Cluster als disconnected markieren"""
         if not self.connected or not self.client:
