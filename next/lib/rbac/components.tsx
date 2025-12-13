@@ -35,7 +35,7 @@ export function PermissionGate({
 interface PermissionButtonProps {
   permission: Permission | Permission[];
   mode?: "any" | "all";
-  children: ReactElement;
+  children: ReactElement<Record<string, unknown>>;
   disabledClassName?: string;
   showToast?: boolean;
   toastMessage?: string;
@@ -66,7 +66,7 @@ export function PermissionButton({
   // Clone the element and override props for disabled state
   return cloneElement(children, {
     ...children.props,
-    className: cn(children.props.className, disabledClassName),
+    className: cn(children.props.className as string | undefined, disabledClassName),
     onClick: (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -84,7 +84,7 @@ export function PermissionButton({
 interface PermissionLinkProps {
   permission: Permission | Permission[];
   mode?: "any" | "all";
-  children: ReactElement;
+  children: ReactElement<Record<string, unknown>>;
   disabledClassName?: string;
 }
 
@@ -110,7 +110,7 @@ export function PermissionLink({
 
   return cloneElement(children, {
     ...children.props,
-    className: cn(children.props.className, disabledClassName),
+    className: cn(children.props.className as string | undefined, disabledClassName),
     onClick: (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();

@@ -30,8 +30,8 @@ function getRoleBadge(role: Team["role"]): string {
       return "Owner";
     case "admin":
       return "Admin";
-    case "member":
-      return "Member";
+    case "contributor":
+      return "Contributor";
     case "viewer":
       return "Viewer";
     default:
