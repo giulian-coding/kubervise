@@ -21,9 +21,8 @@ spec:
       serviceAccountName: kubervise-agent
       containers:
         - name: agent
-          image: kubervise/agent:latest
-          # Oder baue das Image selbst und pushe es zu deiner Registry:
-          # image: your-registry.com/kubervise-agent:latest
+          # WICHTIG: Ersetze mit deinem GitHub Username
+          image: ghcr.io/YOUR_GITHUB_USERNAME/kubervise-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8001

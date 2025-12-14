@@ -14,9 +14,6 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
-  Monitor,
-  Apple,
-  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +29,7 @@ import {
 } from "@/lib/actions/cluster";
 
 type Step = "info" | "install" | "verify";
-type InstallMethod = "windows" | "linux" | "mac" | "yaml";
+type InstallMethod = "kubectl" | "manifest";
 type ConnectionStatus = "pending" | "connected" | "expired" | "checking";
 
 interface OnboardingData {
@@ -40,28 +37,16 @@ interface OnboardingData {
   description: string;
   teamId: string;
   onboardingId?: string;
-  installToken?: string;
-  installCommandWindows?: string;
-  installCommandLinux?: string;
-  installCommandMac?: string;
-  // These will be populated after agent connects
   clusterId?: string;
+  installCommandKubectl?: string;
+  installManifest?: string;
   clusterName?: string;
-}
-
-// Linux icon component
-function LinuxIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533.19-.135.4-.198.629-.198zm-4.276.006c.227 0 .435.064.626.198.19.135.334.313.44.533.104.22.155.459.155.724l-.001.02v.02a1.545 1.545 0 01-.092.4.92.92 0 01-.206.334c-.083.1-.166.133-.262.133-.101 0-.184.066-.267.132a.746.746 0 00-.182.333 1.21 1.21 0 00-.062.4v.02c.006.135.035.271.09.402.034.065.13.138.18.198-.066.012-.13.023-.192.066a1.3 1.3 0 00-.218.066c-.085.069-.177.088-.282.133a.695.695 0 00-.087.042.957.957 0 01-.21-.335c-.084-.243-.118-.484-.14-.706l-.003-.024a.083.083 0 01-.004-.021v-.105c0 .02.005.04.006.06.008-.265.062-.465.166-.724a1.14 1.14 0 01.438-.533c.187-.136.373-.199.587-.199h.014z"/>
-    </svg>
-  );
 }
 
 export default function AddClusterPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("info");
-  const [installMethod, setInstallMethod] = useState<InstallMethod>("linux");
+  const [installMethod, setInstallMethod] = useState<InstallMethod>("kubectl");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -140,10 +125,9 @@ export default function AddClusterPage() {
       setOnboardingData((prev) => ({
         ...prev,
         onboardingId: result.onboarding_id,
-        installToken: result.install_token,
-        installCommandWindows: result.install_command_windows,
-        installCommandLinux: result.install_command_linux,
-        installCommandMac: result.install_command_mac,
+        clusterId: result.cluster_id,
+        installCommandKubectl: result.install_command_kubectl,
+        installManifest: result.install_manifest,
       }));
       setStep("install");
     } else {
@@ -168,12 +152,10 @@ export default function AddClusterPage() {
 
   const getCurrentInstallCommand = () => {
     switch (installMethod) {
-      case "windows":
-        return onboardingData.installCommandWindows || "";
-      case "linux":
-        return onboardingData.installCommandLinux || "";
-      case "mac":
-        return onboardingData.installCommandMac || "";
+      case "kubectl":
+        return onboardingData.installCommandKubectl || "";
+      case "manifest":
+        return onboardingData.installManifest || "";
       default:
         return "";
     }
@@ -311,16 +293,16 @@ export default function AddClusterPage() {
       {step === "install" && (
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Important notice */}
-          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-4">
+          <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-4">
             <div className="flex items-start gap-3">
-              <Clock className="size-5 text-amber-500 mt-0.5" />
+              <Server className="size-5 text-blue-500 mt-0.5" />
               <div>
-                <h3 className="font-medium text-amber-600 dark:text-amber-400">
-                  Cluster wird bei Verbindung erstellt
+                <h3 className="font-medium text-blue-600 dark:text-blue-400">
+                  Deploy the Kubervise Agent
                 </h3>
-                <p className="text-sm text-amber-600/80 dark:text-amber-400/80 mt-1">
-                  Der Cluster wird erst in Kubervise hinzugefügt, wenn der Agent erfolgreich verbunden ist.
-                  Das Token ist 24 Stunden gültig.
+                <p className="text-sm text-blue-600/80 dark:text-blue-400/80 mt-1">
+                  Der Cluster wurde erstellt. Führe die folgenden Befehle aus, um den Agent zu deployen.
+                  Der Agent verbindet sich automatisch und beginnt mit der Synchronisation.
                 </p>
               </div>
             </div>
@@ -330,46 +312,39 @@ export default function AddClusterPage() {
           <div className="rounded-lg border bg-card overflow-hidden">
             <div className="flex border-b">
               <button
-                onClick={() => setInstallMethod("linux")}
+                onClick={() => setInstallMethod("kubectl")}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  installMethod === "linux"
+                  installMethod === "kubectl"
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted"
                 }`}
               >
-                <LinuxIcon className="size-4" />
-                Linux
+                <Terminal className="size-4" />
+                kubectl
               </button>
               <button
-                onClick={() => setInstallMethod("mac")}
+                onClick={() => setInstallMethod("manifest")}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  installMethod === "mac"
+                  installMethod === "manifest"
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted"
                 }`}
               >
-                <Apple className="size-4" />
-                macOS
-              </button>
-              <button
-                onClick={() => setInstallMethod("windows")}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  installMethod === "windows"
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-muted"
-                }`}
-              >
-                <Monitor className="size-4" />
-                Windows
+                <Download className="size-4" />
+                YAML Manifest
               </button>
             </div>
 
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-semibold">Quick Install</h2>
+                  <h2 className="text-lg font-semibold">
+                    {installMethod === "kubectl" ? "kubectl Installation" : "Secret Manifest"}
+                  </h2>
                   <p className="text-sm text-muted-foreground">
-                    Run this command on a machine with kubectl access to your cluster
+                    {installMethod === "kubectl"
+                      ? "Run these commands on a machine with kubectl access to your cluster"
+                      : "Save this YAML file and apply it to create the secret"}
                   </p>
                 </div>
                 <Button
@@ -386,13 +361,16 @@ export default function AddClusterPage() {
                 </Button>
               </div>
 
-              <pre className="rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto whitespace-pre">
+              <pre className="rounded-md border bg-muted p-4 text-sm font-mono overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
                 {getCurrentInstallCommand()}
               </pre>
 
-              <div className="mt-4 rounded-md bg-blue-500/10 border border-blue-500/20 p-3">
-                <p className="text-sm text-blue-600 dark:text-blue-400">
-                  <strong>Note:</strong> Make sure kubectl is installed and configured to access your target cluster.
+              <div className="mt-4 rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  <strong>Wichtig:</strong> Stelle sicher, dass kubectl installiert ist und Zugriff auf deinen Ziel-Cluster hat.
+                  {installMethod === "kubectl" && (
+                    <> Ersetze <code className="bg-amber-500/20 px-1 rounded">YOUR_USERNAME</code> mit deinem GitHub-Benutzernamen.</>
+                  )}
                 </p>
               </div>
             </div>
@@ -401,14 +379,14 @@ export default function AddClusterPage() {
           {/* What happens next */}
           <div className="rounded-md bg-green-500/10 border border-green-500/20 p-4">
             <h3 className="font-medium text-green-600 dark:text-green-400 mb-2">
-              What happens after installation?
+              Was passiert nach der Installation?
             </h3>
             <ul className="text-sm text-green-600/80 dark:text-green-400/80 space-y-1">
-              <li>1. The installer fetches the configuration from our API</li>
-              <li>2. Creates a <code className="bg-green-500/20 px-1 rounded">kubervise</code> namespace</li>
-              <li>3. Sets up read-only RBAC permissions</li>
-              <li>4. Deploys the monitoring agent</li>
-              <li>5. <strong>Cluster is created</strong> and starts syncing data</li>
+              <li>1. Der <code className="bg-green-500/20 px-1 rounded">kubervise</code> Namespace wird erstellt</li>
+              <li>2. Ein Secret mit den Supabase-Credentials wird angelegt</li>
+              <li>3. Der Agent wird mit Read-Only RBAC-Berechtigungen deployt</li>
+              <li>4. Der Agent verbindet sich und synchronisiert Cluster-Daten</li>
+              <li>5. Status wechselt zu <strong>"connected"</strong></li>
             </ul>
           </div>
 
@@ -418,7 +396,7 @@ export default function AddClusterPage() {
               Cancel
             </Button>
             <Button onClick={() => setStep("verify")}>
-              I've Installed the Agent
+              Agent wurde deployt
               <ArrowRight className="size-4 ml-2" />
             </Button>
           </div>
