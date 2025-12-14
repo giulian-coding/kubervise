@@ -26,9 +26,7 @@ export type ClusterInstallConfig = {
   cluster_id?: string;
   cluster_name?: string;
   connection_status?: string;
-  install_token?: string;
-  install_command_windows?: string;
-  install_command_linux?: string;
+  install_command_kubectl?: string;
   install_manifest?: string;
   error?: string;
 };
@@ -118,15 +116,6 @@ data:
   };
 }
 
-// Helper function to generate secure tokens
-function generateToken(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let token = "";
-  for (let i = 0; i < 64; i++) {
-    token += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return token;
-}
 
 /**
  * Create a new cluster and return install commands.
@@ -261,7 +250,7 @@ export async function cancelPendingOnboarding(
   return { success: true };
 }
 
-// Legacy function - kept for existing clusters
+// Get install commands for an existing cluster
 export async function getClusterInstallManifest(
   clusterId: string
 ): Promise<ClusterInstallConfig> {
@@ -286,41 +275,28 @@ export async function getClusterInstallManifest(
     return { success: false, error: "Cluster not found" };
   }
 
-  // Get or create install token
-  let installToken: string;
+  // Get Supabase credentials from environment
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  const { data: existingToken } = await supabase
-    .from("cluster_onboarding_tokens")
-    .select("token")
-    .eq("cluster_id", clusterId)
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-
-  if (existingToken) {
-    installToken = existingToken.token;
-  } else {
-    // Create new token
-    installToken = generateToken();
-    await supabase.from("cluster_onboarding_tokens").insert({
-      cluster_id: clusterId,
-      token: installToken,
-      created_by: user.id,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-    });
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return { success: false, error: "Server configuration error" };
   }
 
-  const cliCommands = generateCLICommands(installToken);
+  // Generate install commands
+  const installCommands = generateInstallCommands(
+    cluster.id,
+    supabaseUrl,
+    supabaseServiceKey
+  );
 
   return {
     success: true,
     cluster_id: cluster.id,
     cluster_name: cluster.name,
     connection_status: cluster.connection_status,
-    install_token: installToken,
-    install_command_windows: cliCommands.windows,
-    install_command_linux: cliCommands.linux,
+    install_command_kubectl: installCommands.kubectl,
+    install_manifest: installCommands.manifest,
   };
 }
 
