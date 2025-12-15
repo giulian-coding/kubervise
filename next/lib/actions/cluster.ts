@@ -45,16 +45,16 @@ function getAppUrl(): string {
 // Generate kubectl install commands for the Kubernetes agent
 function generateInstallCommands(
   clusterId: string,
-  supabaseUrl: string,
-  supabaseServiceKey: string
+  agentToken: string,
+  apiUrl: string
 ): {
   kubectl: string;
   helm: string;
   manifest: string;
 } {
   // Base64 encode the values for Kubernetes secrets
-  const supabaseUrlB64 = Buffer.from(supabaseUrl).toString("base64");
-  const supabaseKeyB64 = Buffer.from(supabaseServiceKey).toString("base64");
+  const apiUrlB64 = Buffer.from(apiUrl).toString("base64");
+  const agentTokenB64 = Buffer.from(agentToken).toString("base64");
   const clusterIdB64 = Buffer.from(clusterId).toString("base64");
 
   return {
@@ -73,8 +73,8 @@ metadata:
     app.kubernetes.io/component: agent
 type: Opaque
 stringData:
-  OBSERVE_SUPABASE_URL: "${supabaseUrl}"
-  OBSERVE_SUPABASE_SERVICE_KEY: "${supabaseServiceKey}"
+  OBSERVE_API_URL: "${apiUrl}"
+  OBSERVE_AGENT_TOKEN: "${agentToken}"
   OBSERVE_CLUSTER_ID: "${clusterId}"
 EOF
 
@@ -94,8 +94,8 @@ helm repo add kubervise https://charts.kubervise.io
 helm upgrade --install kubervise-agent kubervise/agent \\
   --namespace kubervise \\
   --create-namespace \\
-  --set supabase.url="${supabaseUrl}" \\
-  --set supabase.serviceKey="${supabaseServiceKey}" \\
+  --set api.url="${apiUrl}" \\
+  --set agent.token="${agentToken}" \\
   --set cluster.id="${clusterId}"`,
 
     manifest: `# Save this as kubervise-secret.yaml and apply with: kubectl apply -f kubervise-secret.yaml
@@ -110,12 +110,22 @@ metadata:
     app.kubernetes.io/component: agent
 type: Opaque
 data:
-  OBSERVE_SUPABASE_URL: ${supabaseUrlB64}
-  OBSERVE_SUPABASE_SERVICE_KEY: ${supabaseKeyB64}
+  OBSERVE_API_URL: ${apiUrlB64}
+  OBSERVE_AGENT_TOKEN: ${agentTokenB64}
   OBSERVE_CLUSTER_ID: ${clusterIdB64}`,
   };
 }
 
+
+// Generate a secure random token
+function generateAgentToken(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let token = "";
+  for (let i = 0; i < 64; i++) {
+    token += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return token;
+}
 
 /**
  * Create a new cluster and return install commands.
@@ -137,16 +147,10 @@ export async function createPendingClusterOnboarding(
     return { success: false, error: "Not authenticated" };
   }
 
-  // Get Supabase credentials from environment
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    console.error("Missing Supabase environment variables");
-    return { success: false, error: "Server configuration error" };
-  }
-
   try {
+    // Generate agent token for API authentication
+    const agentToken = generateAgentToken();
+
     // Create the cluster directly with "pending" status
     const { data: cluster, error: clusterError } = await supabase
       .from("clusters")
@@ -156,6 +160,7 @@ export async function createPendingClusterOnboarding(
         description: description || null,
         connection_status: "pending",
         created_by: user.id,
+        agent_token: agentToken,
       })
       .select()
       .single();
@@ -165,11 +170,12 @@ export async function createPendingClusterOnboarding(
       return { success: false, error: clusterError?.message || "Failed to create cluster" };
     }
 
-    // Generate install commands with cluster ID
+    // Generate install commands with API URL and agent token
+    const apiUrl = getAppUrl();
     const installCommands = generateInstallCommands(
       cluster.id,
-      supabaseUrl,
-      supabaseServiceKey
+      agentToken,
+      apiUrl
     );
 
     return {
@@ -264,10 +270,10 @@ export async function getClusterInstallManifest(
     return { success: false, error: "Not authenticated" };
   }
 
-  // Get cluster
+  // Get cluster with agent_token
   const { data: cluster, error: clusterError } = await supabase
     .from("clusters")
-    .select("id, name, connection_status")
+    .select("id, name, connection_status, agent_token")
     .eq("id", clusterId)
     .single();
 
@@ -275,19 +281,22 @@ export async function getClusterInstallManifest(
     return { success: false, error: "Cluster not found" };
   }
 
-  // Get Supabase credentials from environment
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    return { success: false, error: "Server configuration error" };
+  // Generate new token if not exists
+  let agentToken = cluster.agent_token;
+  if (!agentToken) {
+    agentToken = generateAgentToken();
+    await supabase
+      .from("clusters")
+      .update({ agent_token: agentToken })
+      .eq("id", clusterId);
   }
 
-  // Generate install commands
+  // Generate install commands with API URL and agent token
+  const apiUrl = getAppUrl();
   const installCommands = generateInstallCommands(
     cluster.id,
-    supabaseUrl,
-    supabaseServiceKey
+    agentToken,
+    apiUrl
   );
 
   return {
