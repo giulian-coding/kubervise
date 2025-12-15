@@ -39,6 +39,7 @@ interface OnboardingData {
   onboardingId?: string;
   clusterId?: string;
   installCommandKubectl?: string;
+  installCommandHelm?: string;
   installManifest?: string;
   clusterName?: string;
 }
@@ -127,6 +128,7 @@ export default function AddClusterPage() {
         onboardingId: result.onboarding_id,
         clusterId: result.cluster_id,
         installCommandKubectl: result.install_command_kubectl,
+        installCommandHelm: result.install_command_helm,
         installManifest: result.install_manifest,
       }));
       setStep("install");
