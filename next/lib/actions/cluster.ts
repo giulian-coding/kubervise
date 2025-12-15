@@ -42,7 +42,7 @@ function getAppUrl(): string {
   return "http://localhost:3000";
 }
 
-// Generate kubectl install commands for the Kubernetes agent
+// Generate install commands for the Kubervise agent
 function generateInstallCommands(
   clusterId: string,
   agentToken: string,
@@ -52,67 +52,61 @@ function generateInstallCommands(
   helm: string;
   manifest: string;
 } {
-  // Base64 encode the values for Kubernetes secrets
-  const apiUrlB64 = Buffer.from(apiUrl).toString("base64");
-  const agentTokenB64 = Buffer.from(agentToken).toString("base64");
-  const clusterIdB64 = Buffer.from(clusterId).toString("base64");
-
   return {
-    kubectl: `# 1. Create namespace (idempotent - ignores if exists)
-kubectl create namespace kubervise --dry-run=client -o yaml | kubectl apply -f -
+    // Binary install - simplest option
+    kubectl: `# Option 1: Download and run the agent binary (Linux)
+curl -sSL ${apiUrl}/downloads/agentkubervise-linux-amd64 -o agentkubervise
+chmod +x agentkubervise
+./agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-# 2. Create/Update secret with credentials
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubervise-agent-secrets
-  namespace: kubervise
-  labels:
-    app.kubernetes.io/name: kubervise
-    app.kubernetes.io/component: agent
-type: Opaque
-stringData:
-  OBSERVE_API_URL: "${apiUrl}"
-  OBSERVE_AGENT_TOKEN: "${agentToken}"
-  OBSERVE_CLUSTER_ID: "${clusterId}"
+# Option 2: Run with Docker
+docker run -d --name kubervise-agent \\
+  -e KUBERVISE_API_URL="${apiUrl}" \\
+  -e KUBERVISE_AGENT_TOKEN="${agentToken}" \\
+  -e KUBERVISE_CLUSTER_ID="${clusterId}" \\
+  -v ~/.kube:/root/.kube:ro \\
+  kubervise/agent:latest
+
+# Option 3: Run as systemd service (after downloading binary)
+cat > /etc/systemd/system/kubervise-agent.service <<EOF
+[Unit]
+Description=Kubervise Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 EOF
+systemctl enable --now kubervise-agent`,
 
-# 3. Apply the agent manifests (creates or updates)
-# WICHTIG: Ersetze YOUR_GITHUB_USERNAME mit deinem GitHub Username
-kubectl apply -f https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/kubervise/main/workers/observe/k8s/serviceaccount.yaml
-kubectl apply -f https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/kubervise/main/workers/observe/k8s/deployment.yaml
+    // Direct run command
+    helm: `# Direct command (if agent is already installed)
+agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-# 4. Restart deployment to pick up secret changes (if updating)
-kubectl -n kubervise rollout restart deployment/kubervise-agent 2>/dev/null || true
+# Or with environment variables
+export KUBERVISE_API_URL="${apiUrl}"
+export KUBERVISE_AGENT_TOKEN="${agentToken}"
+export KUBERVISE_CLUSTER_ID="${clusterId}"
+agentkubervise`,
 
-# 5. Verify deployment
-kubectl -n kubervise get pods -w`,
+    // Windows install
+    manifest: `# Windows Installation (PowerShell)
+# 1. Download the agent
+Invoke-WebRequest -Uri "${apiUrl}/downloads/agentkubervise-windows-amd64.exe" -OutFile agentkubervise.exe
 
-    helm: `# Coming soon: Helm chart installation
-helm repo add kubervise https://charts.kubervise.io
-helm upgrade --install kubervise-agent kubervise/agent \\
-  --namespace kubervise \\
-  --create-namespace \\
-  --set api.url="${apiUrl}" \\
-  --set agent.token="${agentToken}" \\
-  --set cluster.id="${clusterId}"`,
+# 2. Run the agent
+.\\agentkubervise.exe --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-    manifest: `# Save this as kubervise-secret.yaml and apply with: kubectl apply -f kubervise-secret.yaml
-# This is idempotent - safe to run multiple times
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubervise-agent-secrets
-  namespace: kubervise
-  labels:
-    app.kubernetes.io/name: kubervise
-    app.kubernetes.io/component: agent
-type: Opaque
-data:
-  OBSERVE_API_URL: ${apiUrlB64}
-  OBSERVE_AGENT_TOKEN: ${agentTokenB64}
-  OBSERVE_CLUSTER_ID: ${clusterIdB64}`,
+# Or set environment variables and run
+$env:KUBERVISE_API_URL="${apiUrl}"
+$env:KUBERVISE_AGENT_TOKEN="${agentToken}"
+$env:KUBERVISE_CLUSTER_ID="${clusterId}"
+.\\agentkubervise.exe`,
   };
 }
 

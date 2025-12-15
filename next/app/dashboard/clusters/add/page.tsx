@@ -29,7 +29,7 @@ import {
 } from "@/lib/actions/cluster";
 
 type Step = "info" | "install" | "verify";
-type InstallMethod = "kubectl" | "manifest";
+type InstallMethod = "linux" | "command" | "windows";
 type ConnectionStatus = "pending" | "connected" | "expired" | "checking";
 
 interface OnboardingData {
@@ -46,7 +46,7 @@ interface OnboardingData {
 export default function AddClusterPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("info");
-  const [installMethod, setInstallMethod] = useState<InstallMethod>("kubectl");
+  const [installMethod, setInstallMethod] = useState<InstallMethod>("linux");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -152,9 +152,11 @@ export default function AddClusterPage() {
 
   const getCurrentInstallCommand = () => {
     switch (installMethod) {
-      case "kubectl":
+      case "linux":
         return onboardingData.installCommandKubectl || "";
-      case "manifest":
+      case "command":
+        return onboardingData.installCommandHelm || "";
+      case "windows":
         return onboardingData.installManifest || "";
       default:
         return "";
@@ -312,26 +314,37 @@ export default function AddClusterPage() {
           <div className="rounded-lg border bg-card overflow-hidden">
             <div className="flex border-b">
               <button
-                onClick={() => setInstallMethod("kubectl")}
+                onClick={() => setInstallMethod("linux")}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  installMethod === "kubectl"
+                  installMethod === "linux"
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted"
                 }`}
               >
                 <Terminal className="size-4" />
-                kubectl
+                Linux / macOS
               </button>
               <button
-                onClick={() => setInstallMethod("manifest")}
+                onClick={() => setInstallMethod("command")}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  installMethod === "manifest"
+                  installMethod === "command"
+                    ? "bg-primary text-primary-foreground"
+                    : "hover:bg-muted"
+                }`}
+              >
+                <Server className="size-4" />
+                Direct Command
+              </button>
+              <button
+                onClick={() => setInstallMethod("windows")}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+                  installMethod === "windows"
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted"
                 }`}
               >
                 <Download className="size-4" />
-                YAML Manifest
+                Windows
               </button>
             </div>
 
@@ -339,12 +352,14 @@ export default function AddClusterPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {installMethod === "kubectl" ? "kubectl Installation" : "Secret Manifest"}
+                    {installMethod === "linux" && "Linux / macOS Installation"}
+                    {installMethod === "command" && "Direct Command"}
+                    {installMethod === "windows" && "Windows Installation"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    {installMethod === "kubectl"
-                      ? "Run these commands on a machine with kubectl access to your cluster"
-                      : "Save this YAML file and apply it to create the secret"}
+                    {installMethod === "linux" && "Download and run the agent binary on your Linux or macOS system"}
+                    {installMethod === "command" && "Run the agent if it's already installed on your system"}
+                    {installMethod === "windows" && "Download and run the agent on Windows using PowerShell"}
                   </p>
                 </div>
                 <Button
@@ -367,10 +382,8 @@ export default function AddClusterPage() {
 
               <div className="mt-4 rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
                 <p className="text-sm text-amber-600 dark:text-amber-400">
-                  <strong>Wichtig:</strong> Stelle sicher, dass kubectl installiert ist und Zugriff auf deinen Ziel-Cluster hat.
-                  {installMethod === "kubectl" && (
-                    <> Ersetze <code className="bg-amber-500/20 px-1 rounded">YOUR_USERNAME</code> mit deinem GitHub-Benutzernamen.</>
-                  )}
+                  <strong>Wichtig:</strong> Der Agent benötigt Zugriff auf deinen Kubernetes-Cluster.
+                  Stelle sicher, dass eine gültige kubeconfig verfügbar ist oder der Agent im Cluster läuft.
                 </p>
               </div>
             </div>
@@ -382,11 +395,10 @@ export default function AddClusterPage() {
               Was passiert nach der Installation?
             </h3>
             <ul className="text-sm text-green-600/80 dark:text-green-400/80 space-y-1">
-              <li>1. Der <code className="bg-green-500/20 px-1 rounded">kubervise</code> Namespace wird erstellt</li>
-              <li>2. Ein Secret mit den Supabase-Credentials wird angelegt</li>
-              <li>3. Der Agent wird mit Read-Only RBAC-Berechtigungen deployt</li>
-              <li>4. Der Agent verbindet sich und synchronisiert Cluster-Daten</li>
-              <li>5. Status wechselt zu <strong>"connected"</strong></li>
+              <li>1. Der Agent verbindet sich mit deinem Kubernetes-Cluster</li>
+              <li>2. Cluster-Daten werden sicher an Kubervise übertragen</li>
+              <li>3. Der Status wechselt zu <strong>"connected"</strong></li>
+              <li>4. Du kannst deinen Cluster im Dashboard überwachen</li>
             </ul>
           </div>
 

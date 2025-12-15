@@ -92,13 +92,15 @@ export async function GET(
       .delete()
       .eq("id", pendingOnboarding.id);
 
-    // Generate and return the manifest with API-based auth
+    // Return credentials for CLI agent
     const apiUrl = getAppUrl();
     const manifest = generateInstallManifest(cluster.id, agentToken, apiUrl);
 
     return NextResponse.json({
       cluster_id: cluster.id,
       cluster_name: cluster.name,
+      agent_token: agentToken,
+      api_url: apiUrl,
       manifest: manifest,
       message: "Cluster created successfully",
     });
@@ -158,13 +160,15 @@ export async function GET(
       .eq("id", cluster.id),
   ]);
 
-  // Generate the manifest with API-based auth
+  // Return credentials for CLI agent
   const apiUrl = getAppUrl();
   const manifest = generateInstallManifest(cluster.id, agentToken, apiUrl);
 
   return NextResponse.json({
     cluster_id: cluster.id,
     cluster_name: cluster.name,
+    agent_token: agentToken,
+    api_url: apiUrl,
     manifest: manifest,
   });
 }
