@@ -7,6 +7,8 @@ export type CreatePendingOnboardingResult = {
   success: boolean;
   onboarding_id?: string;
   cluster_id?: string;
+  agent_token?: string;
+  api_url?: string;
   install_command_kubectl?: string;
   install_command_helm?: string;
   install_manifest?: string;
@@ -176,6 +178,8 @@ export async function createPendingClusterOnboarding(
       success: true,
       onboarding_id: cluster.id,
       cluster_id: cluster.id,
+      agent_token: agentToken,
+      api_url: apiUrl,
       install_command_kubectl: installCommands.kubectl,
       install_command_helm: installCommands.helm,
       install_manifest: installCommands.manifest,
