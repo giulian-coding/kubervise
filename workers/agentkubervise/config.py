@@ -16,12 +16,16 @@ class Settings(BaseSettings):
     # Monitoring Settings
     watch_events: bool = True
     check_interval: int = 30  # Sekunden
-    sync_interval: int = 10  # Sekunden - wie oft Daten zu Supabase synchronisiert werden
+    sync_interval: int = 10  # Sekunden - wie oft Daten zur API synchronisiert werden
 
-    # Supabase Settings
+    # Kubervise API Settings (new - preferred)
+    api_url: str = ""  # Kubervise API URL (e.g., https://app.kubervise.io)
+    agent_token: str = ""  # Agent authentication token
+    cluster_id: str = ""  # UUID des Clusters
+
+    # Legacy Supabase Settings (deprecated - for backwards compatibility)
     supabase_url: str = ""
-    supabase_service_key: str = ""  # Service role key für Worker (bypasses RLS)
-    cluster_id: str = ""  # UUID des Clusters in Supabase
+    supabase_service_key: str = ""
 
     class Config:
         env_prefix = "OBSERVE_"

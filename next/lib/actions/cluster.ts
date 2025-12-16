@@ -42,80 +42,84 @@ function getAppUrl(): string {
   return "http://localhost:3000";
 }
 
-// Generate kubectl install commands for the Kubernetes agent
+// Generate install commands for the Kubervise agent
 function generateInstallCommands(
   clusterId: string,
-  supabaseUrl: string,
-  supabaseServiceKey: string
+  agentToken: string,
+  apiUrl: string
 ): {
   kubectl: string;
   helm: string;
   manifest: string;
 } {
-  // Base64 encode the values for Kubernetes secrets
-  const supabaseUrlB64 = Buffer.from(supabaseUrl).toString("base64");
-  const supabaseKeyB64 = Buffer.from(supabaseServiceKey).toString("base64");
-  const clusterIdB64 = Buffer.from(clusterId).toString("base64");
-
   return {
-    kubectl: `# 1. Create namespace (idempotent - ignores if exists)
-kubectl create namespace kubervise --dry-run=client -o yaml | kubectl apply -f -
+    // Binary install - simplest option
+    kubectl: `# Option 1: Download and run the agent binary (Linux)
+curl -sSL ${apiUrl}/downloads/agentkubervise-linux-amd64 -o agentkubervise
+chmod +x agentkubervise
+./agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-# 2. Create/Update secret with credentials
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubervise-agent-secrets
-  namespace: kubervise
-  labels:
-    app.kubernetes.io/name: kubervise
-    app.kubernetes.io/component: agent
-type: Opaque
-stringData:
-  OBSERVE_SUPABASE_URL: "${supabaseUrl}"
-  OBSERVE_SUPABASE_SERVICE_KEY: "${supabaseServiceKey}"
-  OBSERVE_CLUSTER_ID: "${clusterId}"
+# Option 2: Run with Docker
+docker run -d --name kubervise-agent \\
+  -e KUBERVISE_API_URL="${apiUrl}" \\
+  -e KUBERVISE_AGENT_TOKEN="${agentToken}" \\
+  -e KUBERVISE_CLUSTER_ID="${clusterId}" \\
+  -v ~/.kube:/root/.kube:ro \\
+  kubervise/agent:latest
+
+# Option 3: Run as systemd service (after downloading binary)
+cat > /etc/systemd/system/kubervise-agent.service <<EOF
+[Unit]
+Description=Kubervise Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 EOF
+systemctl enable --now kubervise-agent`,
 
-# 3. Apply the agent manifests (creates or updates)
-# WICHTIG: Ersetze YOUR_GITHUB_USERNAME mit deinem GitHub Username
-kubectl apply -f https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/kubervise/main/workers/observe/k8s/serviceaccount.yaml
-kubectl apply -f https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/kubervise/main/workers/observe/k8s/deployment.yaml
+    // Direct run command
+    helm: `# Direct command (if agent is already installed)
+agentkubervise --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-# 4. Restart deployment to pick up secret changes (if updating)
-kubectl -n kubervise rollout restart deployment/kubervise-agent 2>/dev/null || true
+# Or with environment variables
+export KUBERVISE_API_URL="${apiUrl}"
+export KUBERVISE_AGENT_TOKEN="${agentToken}"
+export KUBERVISE_CLUSTER_ID="${clusterId}"
+agentkubervise`,
 
-# 5. Verify deployment
-kubectl -n kubervise get pods -w`,
+    // Windows install
+    manifest: `# Windows Installation (PowerShell)
+# 1. Download the agent
+Invoke-WebRequest -Uri "${apiUrl}/downloads/agentkubervise-windows-amd64.exe" -OutFile agentkubervise.exe
 
-    helm: `# Coming soon: Helm chart installation
-helm repo add kubervise https://charts.kubervise.io
-helm upgrade --install kubervise-agent kubervise/agent \\
-  --namespace kubervise \\
-  --create-namespace \\
-  --set supabase.url="${supabaseUrl}" \\
-  --set supabase.serviceKey="${supabaseServiceKey}" \\
-  --set cluster.id="${clusterId}"`,
+# 2. Run the agent
+.\\agentkubervise.exe --api-url "${apiUrl}" --token "${agentToken}" --cluster-id "${clusterId}"
 
-    manifest: `# Save this as kubervise-secret.yaml and apply with: kubectl apply -f kubervise-secret.yaml
-# This is idempotent - safe to run multiple times
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubervise-agent-secrets
-  namespace: kubervise
-  labels:
-    app.kubernetes.io/name: kubervise
-    app.kubernetes.io/component: agent
-type: Opaque
-data:
-  OBSERVE_SUPABASE_URL: ${supabaseUrlB64}
-  OBSERVE_SUPABASE_SERVICE_KEY: ${supabaseKeyB64}
-  OBSERVE_CLUSTER_ID: ${clusterIdB64}`,
+# Or set environment variables and run
+$env:KUBERVISE_API_URL="${apiUrl}"
+$env:KUBERVISE_AGENT_TOKEN="${agentToken}"
+$env:KUBERVISE_CLUSTER_ID="${clusterId}"
+.\\agentkubervise.exe`,
   };
 }
 
+
+// Generate a secure random token
+function generateAgentToken(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let token = "";
+  for (let i = 0; i < 64; i++) {
+    token += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return token;
+}
 
 /**
  * Create a new cluster and return install commands.
@@ -137,16 +141,10 @@ export async function createPendingClusterOnboarding(
     return { success: false, error: "Not authenticated" };
   }
 
-  // Get Supabase credentials from environment
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    console.error("Missing Supabase environment variables");
-    return { success: false, error: "Server configuration error" };
-  }
-
   try {
+    // Generate agent token for API authentication
+    const agentToken = generateAgentToken();
+
     // Create the cluster directly with "pending" status
     const { data: cluster, error: clusterError } = await supabase
       .from("clusters")
@@ -156,6 +154,7 @@ export async function createPendingClusterOnboarding(
         description: description || null,
         connection_status: "pending",
         created_by: user.id,
+        agent_token: agentToken,
       })
       .select()
       .single();
@@ -165,11 +164,12 @@ export async function createPendingClusterOnboarding(
       return { success: false, error: clusterError?.message || "Failed to create cluster" };
     }
 
-    // Generate install commands with cluster ID
+    // Generate install commands with API URL and agent token
+    const apiUrl = getAppUrl();
     const installCommands = generateInstallCommands(
       cluster.id,
-      supabaseUrl,
-      supabaseServiceKey
+      agentToken,
+      apiUrl
     );
 
     return {
@@ -264,10 +264,10 @@ export async function getClusterInstallManifest(
     return { success: false, error: "Not authenticated" };
   }
 
-  // Get cluster
+  // Get cluster with agent_token
   const { data: cluster, error: clusterError } = await supabase
     .from("clusters")
-    .select("id, name, connection_status")
+    .select("id, name, connection_status, agent_token")
     .eq("id", clusterId)
     .single();
 
@@ -275,19 +275,22 @@ export async function getClusterInstallManifest(
     return { success: false, error: "Cluster not found" };
   }
 
-  // Get Supabase credentials from environment
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    return { success: false, error: "Server configuration error" };
+  // Generate new token if not exists
+  let agentToken = cluster.agent_token;
+  if (!agentToken) {
+    agentToken = generateAgentToken();
+    await supabase
+      .from("clusters")
+      .update({ agent_token: agentToken })
+      .eq("id", clusterId);
   }
 
-  // Generate install commands
+  // Generate install commands with API URL and agent token
+  const apiUrl = getAppUrl();
   const installCommands = generateInstallCommands(
     cluster.id,
-    supabaseUrl,
-    supabaseServiceKey
+    agentToken,
+    apiUrl
   );
 
   return {

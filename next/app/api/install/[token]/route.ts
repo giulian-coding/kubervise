@@ -4,6 +4,17 @@ import { NextRequest, NextResponse } from "next/server";
 // This endpoint is called by the CLI installer
 // When called, it creates the actual cluster and returns the installation manifest
 
+// Get the app URL for API endpoints
+function getAppUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "http://localhost:3000";
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
@@ -81,12 +92,15 @@ export async function GET(
       .delete()
       .eq("id", pendingOnboarding.id);
 
-    // Generate and return the manifest
-    const manifest = generateInstallManifest(cluster.id, supabaseUrl, supabaseServiceKey);
+    // Return credentials for CLI agent
+    const apiUrl = getAppUrl();
+    const manifest = generateInstallManifest(cluster.id, agentToken, apiUrl);
 
     return NextResponse.json({
       cluster_id: cluster.id,
       cluster_name: cluster.name,
+      agent_token: agentToken,
+      api_url: apiUrl,
       manifest: manifest,
       message: "Cluster created successfully",
     });
@@ -117,7 +131,7 @@ export async function GET(
   // Get cluster info
   const { data: cluster, error: clusterError } = await supabase
     .from("clusters")
-    .select("id, name")
+    .select("id, name, agent_token")
     .eq("id", tokenData.cluster_id)
     .single();
 
@@ -128,7 +142,10 @@ export async function GET(
     );
   }
 
-  // Mark token as used and update cluster status
+  // Generate agent token if not exists
+  const agentToken = cluster.agent_token || generateToken();
+
+  // Mark token as used and update cluster status (and agent_token if needed)
   await Promise.all([
     supabase
       .from("cluster_onboarding_tokens")
@@ -136,16 +153,22 @@ export async function GET(
       .eq("token", token),
     supabase
       .from("clusters")
-      .update({ connection_status: "connected" })
+      .update({
+        connection_status: "connected",
+        agent_token: agentToken
+      })
       .eq("id", cluster.id),
   ]);
 
-  // Generate the manifest
-  const manifest = generateInstallManifest(cluster.id, supabaseUrl, supabaseServiceKey);
+  // Return credentials for CLI agent
+  const apiUrl = getAppUrl();
+  const manifest = generateInstallManifest(cluster.id, agentToken, apiUrl);
 
   return NextResponse.json({
     cluster_id: cluster.id,
     cluster_name: cluster.name,
+    agent_token: agentToken,
+    api_url: apiUrl,
     manifest: manifest,
   });
 }
@@ -161,8 +184,8 @@ function generateToken(): string {
 
 function generateInstallManifest(
   clusterId: string,
-  supabaseUrl: string,
-  supabaseServiceKey: string
+  agentToken: string,
+  apiUrl: string
 ): string {
   return `---
 apiVersion: v1
@@ -222,8 +245,8 @@ metadata:
   namespace: kubervise
 type: Opaque
 stringData:
-  OBSERVE_SUPABASE_URL: "${supabaseUrl}"
-  OBSERVE_SUPABASE_SERVICE_KEY: "${supabaseServiceKey}"
+  OBSERVE_API_URL: "${apiUrl}"
+  OBSERVE_AGENT_TOKEN: "${agentToken}"
   OBSERVE_CLUSTER_ID: "${clusterId}"
 ---
 apiVersion: apps/v1
@@ -256,16 +279,16 @@ spec:
               value: "30"
             - name: OBSERVE_WATCH_EVENTS
               value: "true"
-            - name: OBSERVE_SUPABASE_URL
+            - name: OBSERVE_API_URL
               valueFrom:
                 secretKeyRef:
                   name: kubervise-agent-secrets
-                  key: OBSERVE_SUPABASE_URL
-            - name: OBSERVE_SUPABASE_SERVICE_KEY
+                  key: OBSERVE_API_URL
+            - name: OBSERVE_AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: kubervise-agent-secrets
-                  key: OBSERVE_SUPABASE_SERVICE_KEY
+                  key: OBSERVE_AGENT_TOKEN
             - name: OBSERVE_CLUSTER_ID
               valueFrom:
                 secretKeyRef:

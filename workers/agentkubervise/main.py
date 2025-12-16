@@ -1,4 +1,4 @@
-"""FastAPI Worker für Kubernetes Cluster Überwachung mit Supabase Sync"""
+"""FastAPI Worker für Kubernetes Cluster Überwachung mit API Sync"""
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -13,7 +13,15 @@ from pydantic import BaseModel
 import logging
 
 from config import settings
-from supabase_client import supabase_sync
+
+# Import sync client based on configuration
+# Prefer API-based sync over legacy Supabase direct access
+if settings.api_url and settings.agent_token:
+    from api_client import api_sync as data_sync
+    SYNC_MODE = "api"
+else:
+    from supabase_client import supabase_sync as data_sync
+    SYNC_MODE = "supabase"
 
 # Logging konfigurieren
 logging.basicConfig(
@@ -707,9 +715,9 @@ class ClusterWatcher:
                     f"{event_obj.message}"
                 )
 
-                # Event zu Supabase synchronisieren
-                if supabase_sync.connected:
-                    await supabase_sync.add_event(
+                # Event synchronisieren (nur im Legacy-Modus)
+                if SYNC_MODE == "supabase" and data_sync.connected:
+                    await data_sync.add_event(
                         event_type=event_type,
                         reason=event_obj.reason or "",
                         message=event_obj.message or "",
@@ -724,14 +732,14 @@ class ClusterWatcher:
             w.stop()
             self.watching = False
 
-    async def sync_to_supabase(self):
-        """Periodische Synchronisation zu Supabase"""
-        if not supabase_sync.connected:
-            logger.warning("Supabase nicht verbunden, überspringe Sync")
+    async def sync_data(self):
+        """Periodische Synchronisation zur API/Supabase"""
+        if not data_sync.connected:
+            logger.warning("Sync-Client nicht verbunden, überspringe Sync")
             return
 
         self.syncing = True
-        logger.info("Starte periodische Supabase-Synchronisation...")
+        logger.info(f"Starte periodische Synchronisation (Modus: {SYNC_MODE})...")
 
         while self.syncing:
             try:
@@ -747,65 +755,78 @@ class ClusterWatcher:
                     ingresses = await self.get_ingresses_raw()
                     jobs = await self.get_jobs_raw()
 
-                    # Calculate totals
-                    total_cpu_capacity = ""
-                    total_memory_capacity = ""
+                    if SYNC_MODE == "api":
+                        # API-based sync - send snapshot to Kubervise API
+                        await data_sync.sync_snapshot(
+                            nodes=nodes,
+                            pods=pods,
+                            namespaces=namespaces,
+                            deployments=deployments,
+                            statefulsets=statefulsets,
+                            daemonsets=daemonsets,
+                            services=services,
+                        )
+                    else:
+                        # Legacy Supabase direct sync
+                        # Calculate totals
+                        total_cpu_capacity = ""
+                        total_memory_capacity = ""
 
-                    if nodes:
-                        # Sum up CPU resources
-                        cpu_cap = 0
-                        for n in nodes:
-                            cpu_val = n.get("capacity_cpu", "0")
-                            if cpu_val and cpu_val != "N/A":
-                                try:
-                                    if "m" in str(cpu_val):
-                                        cpu_cap += int(str(cpu_val).replace("m", ""))
-                                    else:
-                                        cpu_cap += int(cpu_val) * 1000
-                                except (ValueError, TypeError):
-                                    pass
-                        total_cpu_capacity = f"{cpu_cap}m" if cpu_cap > 0 else None
+                        if nodes:
+                            # Sum up CPU resources
+                            cpu_cap = 0
+                            for n in nodes:
+                                cpu_val = n.get("capacity_cpu", "0")
+                                if cpu_val and cpu_val != "N/A":
+                                    try:
+                                        if "m" in str(cpu_val):
+                                            cpu_cap += int(str(cpu_val).replace("m", ""))
+                                        else:
+                                            cpu_cap += int(cpu_val) * 1000
+                                    except (ValueError, TypeError):
+                                        pass
+                            total_cpu_capacity = f"{cpu_cap}m" if cpu_cap > 0 else None
 
-                        # Sum up Memory resources
-                        mem_cap = 0
-                        for n in nodes:
-                            mem_val = n.get("capacity_memory", "0")
-                            if mem_val and mem_val != "N/A":
-                                try:
-                                    # Convert to bytes (simplified)
-                                    if "Ki" in str(mem_val):
-                                        mem_cap += int(str(mem_val).replace("Ki", "")) * 1024
-                                    elif "Mi" in str(mem_val):
-                                        mem_cap += int(str(mem_val).replace("Mi", "")) * 1024 * 1024
-                                    elif "Gi" in str(mem_val):
-                                        mem_cap += int(str(mem_val).replace("Gi", "")) * 1024 * 1024 * 1024
-                                except (ValueError, TypeError):
-                                    pass
-                        total_memory_capacity = f"{mem_cap // (1024*1024*1024)}Gi" if mem_cap > 0 else None
+                            # Sum up Memory resources
+                            mem_cap = 0
+                            for n in nodes:
+                                mem_val = n.get("capacity_memory", "0")
+                                if mem_val and mem_val != "N/A":
+                                    try:
+                                        # Convert to bytes (simplified)
+                                        if "Ki" in str(mem_val):
+                                            mem_cap += int(str(mem_val).replace("Ki", "")) * 1024
+                                        elif "Mi" in str(mem_val):
+                                            mem_cap += int(str(mem_val).replace("Mi", "")) * 1024 * 1024
+                                        elif "Gi" in str(mem_val):
+                                            mem_cap += int(str(mem_val).replace("Gi", "")) * 1024 * 1024 * 1024
+                                    except (ValueError, TypeError):
+                                        pass
+                            total_memory_capacity = f"{mem_cap // (1024*1024*1024)}Gi" if mem_cap > 0 else None
 
-                    # Sync cluster status
-                    await supabase_sync.update_cluster_status(
-                        node_count=len(nodes),
-                        pod_count=len(pods),
-                        namespace_count=len(namespaces),
-                        cpu_capacity=total_cpu_capacity,
-                        memory_capacity=total_memory_capacity
-                    )
+                        # Sync cluster status
+                        await data_sync.update_cluster_status(
+                            node_count=len(nodes),
+                            pod_count=len(pods),
+                            namespace_count=len(namespaces),
+                            cpu_capacity=total_cpu_capacity,
+                            memory_capacity=total_memory_capacity
+                        )
 
-                    # Sync nodes
-                    await supabase_sync.sync_nodes(nodes)
+                        # Sync nodes
+                        await data_sync.sync_nodes(nodes)
 
-                    # Sync namespaces and get IDs
-                    namespace_ids = await supabase_sync.sync_namespaces(namespaces)
+                        # Sync namespaces and get IDs
+                        namespace_ids = await data_sync.sync_namespaces(namespaces)
 
-                    # Sync all resources
-                    await supabase_sync.sync_pods(pods, namespace_ids)
-                    await supabase_sync.sync_deployments(deployments, namespace_ids)
-                    await supabase_sync.sync_statefulsets(statefulsets, namespace_ids)
-                    await supabase_sync.sync_daemonsets(daemonsets, namespace_ids)
-                    await supabase_sync.sync_services(services, namespace_ids)
-                    await supabase_sync.sync_ingresses(ingresses, namespace_ids)
-                    await supabase_sync.sync_jobs(jobs, namespace_ids)
+                        # Sync all resources
+                        await data_sync.sync_pods(pods, namespace_ids)
+                        await data_sync.sync_deployments(deployments, namespace_ids)
+                        await data_sync.sync_statefulsets(statefulsets, namespace_ids)
+                        await data_sync.sync_daemonsets(daemonsets, namespace_ids)
+                        await data_sync.sync_services(services, namespace_ids)
+                        await data_sync.sync_ingresses(ingresses, namespace_ids)
+                        await data_sync.sync_jobs(jobs, namespace_ids)
 
                     logger.info(
                         f"Sync abgeschlossen: {len(nodes)} nodes, {len(pods)} pods, "
@@ -815,12 +836,12 @@ class ClusterWatcher:
                     logger.warning("Kubernetes nicht verbunden, überspringe Sync")
 
             except Exception as e:
-                logger.error(f"Fehler bei Supabase Sync: {e}")
+                logger.error(f"Fehler bei Sync: {e}")
 
             # Warten bis zum nächsten Sync
             await asyncio.sleep(settings.sync_interval)
 
-        logger.info("Supabase-Synchronisation gestoppt")
+        logger.info("Synchronisation gestoppt")
 
 
 # Global Watcher Instanz
@@ -831,15 +852,18 @@ watcher = ClusterWatcher()
 async def lifespan(app: FastAPI):
     """Lifecycle Management"""
     # Startup
-    logger.info("Starte Observe Worker...")
+    logger.info(f"Starte Observe Worker (Sync-Modus: {SYNC_MODE})...")
     await watcher.connect()
 
-    # Supabase verbinden
-    supabase_sync.connect()
+    # Sync-Client verbinden
+    if SYNC_MODE == "api":
+        await data_sync.connect()
+    else:
+        data_sync.connect()
 
     # Background Tasks starten
     event_task = asyncio.create_task(watcher.watch_events())
-    sync_task = asyncio.create_task(watcher.sync_to_supabase())
+    sync_task = asyncio.create_task(watcher.sync_data())
 
     yield
 
@@ -849,7 +873,11 @@ async def lifespan(app: FastAPI):
     watcher.syncing = False
 
     # Cluster als disconnected markieren
-    await supabase_sync.set_disconnected()
+    await data_sync.set_disconnected()
+
+    # API-Client schließen
+    if SYNC_MODE == "api":
+        await data_sync.close()
 
     # Tasks beenden
     event_task.cancel()
@@ -900,7 +928,8 @@ async def health():
     return {
         "status": "healthy",
         "kubernetes_connected": watcher.connected,
-        "supabase_connected": supabase_sync.connected,
+        "sync_connected": data_sync.connected,
+        "sync_mode": SYNC_MODE,
         "watching_events": watcher.watching,
         "syncing": watcher.syncing,
         "timestamp": datetime.utcnow().isoformat()
@@ -1023,26 +1052,34 @@ async def reconnect():
 @app.post("/sync/trigger")
 async def trigger_sync():
     """Manuelle Synchronisation auslösen"""
-    if not supabase_sync.connected:
-        raise HTTPException(status_code=503, detail="Supabase nicht verbunden")
+    if not data_sync.connected:
+        raise HTTPException(status_code=503, detail="Sync-Client nicht verbunden")
 
     try:
         nodes = await watcher.get_nodes_raw()
         pods = await watcher.get_pods_raw()
         namespaces = await watcher.get_namespaces_raw()
 
-        await supabase_sync.update_cluster_status(
-            node_count=len(nodes),
-            pod_count=len(pods),
-            namespace_count=len(namespaces)
-        )
+        if SYNC_MODE == "api":
+            await data_sync.sync_snapshot(
+                nodes=nodes,
+                pods=pods,
+                namespaces=namespaces,
+            )
+        else:
+            await data_sync.update_cluster_status(
+                node_count=len(nodes),
+                pod_count=len(pods),
+                namespace_count=len(namespaces)
+            )
 
-        await supabase_sync.sync_nodes(nodes)
-        namespace_ids = await supabase_sync.sync_namespaces(namespaces)
-        await supabase_sync.sync_pods(pods, namespace_ids)
+            await data_sync.sync_nodes(nodes)
+            namespace_ids = await data_sync.sync_namespaces(namespaces)
+            await data_sync.sync_pods(pods, namespace_ids)
 
         return {
             "status": "synced",
+            "sync_mode": SYNC_MODE,
             "nodes": len(nodes),
             "pods": len(pods),
             "namespaces": len(namespaces)
