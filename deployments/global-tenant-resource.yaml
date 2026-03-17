@@ -1,0 +1,17 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: GlobalTenantResource
+metadata:
+  name: replicate-deny-all
+spec:
+  tenantSelector:
+    matchLabels:
+      team: team-a  # Wählt alle Tenants mit diesem Label aus
+  resyncPeriod: 60s
+  resources:
+    - namespacedItems:
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          namespace: capsule-system
+          selector:
+            matchLabels:
+              type: security-template

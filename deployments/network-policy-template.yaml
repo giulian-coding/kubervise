@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: global-deny-all
+  namespace: capsule-system
+  labels:
+    type: security-template # Ein Label hilft uns beim Selektieren
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

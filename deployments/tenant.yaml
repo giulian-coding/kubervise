@@ -1,0 +1,10 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  name: example-tenant
+spec:
+  owners:
+    - name: "team-a@example.com"
+      kind: User
+  namespaceOptions:
+    quota: 5

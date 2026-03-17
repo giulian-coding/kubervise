@@ -1,9 +1,0 @@
-#cloud-config
-
-package_update: true
-
-runcmd:
-  - curl -sfL https://get.k3s.io | sh -
-  - mkdir -p /root/.kube
-  - cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
-  - chmod 600 /root/.kube/config
