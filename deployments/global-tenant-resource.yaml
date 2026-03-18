@@ -5,7 +5,7 @@ metadata:
 spec:
   tenantSelector:
     matchLabels:
-      team: team-a  # Wählt alle Tenants mit diesem Label aus
+      capsule-isolation: enabled  # Wählt alle Tenants mit diesem Label aus
   resyncPeriod: 60s
   resources:
     - namespacedItems:
