@@ -1,6 +1,8 @@
 package capsule
 
 import (
+	"fmt"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -25,6 +27,9 @@ func CreateTenantObject(name string, owner string) *unstructured.Unstructured {
 				},
 				"namespaceOptions": map[string]interface{}{
 					"quota": int64(5),
+					"allowedNamespaces": map[string]interface{}{
+						"regex": fmt.Sprintf("^%s-.*$", name), // Zwingt den User, Namespaces mit "tenantname-" zu beginnen
+					},
 				},
 			},
 		},

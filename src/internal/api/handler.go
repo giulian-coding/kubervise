@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/giulian-coding/kubervise/internal/capsule"
@@ -101,6 +102,11 @@ func (h *TenantHandler) DeleteNamespace(c *gin.Context) {
 	namespaceName := c.Param("namespaceName")
 
 	if err := h.Manager.DeleteNamespace(c.Request.Context(), namespaceName); err != nil {
+		if strings.HasPrefix(err.Error(), "not_found:") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -255,4 +261,36 @@ func (h *TenantHandler) DeleteNetworkPolicy(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "NetworkPolicy wird gelöscht - Verbindung getrennt"})
+}
+
+// --- CLI Ausführung (Restricted K8s) ---
+
+func (h *TenantHandler) ExecuteCLICommand(c *gin.Context) {
+	userEmail := c.GetHeader("X-User-Email")
+	if userEmail == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No User Email provided in Header 'X-User-Email'"})
+		return
+	}
+
+	var input struct {
+		Args []string `json:"args"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ungültiges JSON: " + err.Error()})
+		return
+	}
+
+	if len(input.Args) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Keine Befehlsargumente übergeben"})
+		return
+	}
+
+	outputStr, err := h.Manager.ExecuteCLICommand(c.Request.Context(), userEmail, input.Args)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Befehl fehlgeschlagen (evtl. keine Berechtigung durch Capsule)", "details": err.Error(), "output": outputStr})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Erfolgreich ausgeführt", "output": outputStr})
 }

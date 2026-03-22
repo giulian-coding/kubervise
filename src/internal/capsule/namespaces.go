@@ -3,7 +3,9 @@ package capsule
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -30,9 +32,11 @@ func (m *Manager) ListNamespaces(ctx context.Context, tenantName string) ([]map[
 
 	var formattedNamespaces []map[string]interface{}
 	for _, item := range list.Items {
+		// Schneidet den Präfix für die Frontend-Anzeige ab (z.B. "kunde-a-development" -> "development")
+		cleanName := strings.TrimPrefix(item.GetName(), tenantName+"-")
 		formattedNamespaces = append(formattedNamespaces, map[string]interface{}{
-			"id":   item.GetName(),
-			"name": item.GetName(),
+			"id":   item.GetName(), // Die ID MUSS der echte K8s Name bleiben für Folge-Requests
+			"name": cleanName,      // Der Anzeigename im Frontend (ohne Präfix)
 		})
 	}
 
@@ -41,12 +45,15 @@ func (m *Manager) ListNamespaces(ctx context.Context, tenantName string) ([]map[
 
 // CreateNamespace erstellt einen Namespace und weist ihn dem Tenant zu
 func (m *Manager) CreateNamespace(ctx context.Context, name string, tenantName string) error {
+	// Um Namenskonflikte zu vermeiden, präfixen wir den Namespace mit dem Tenant-Namen
+	prefixedName := fmt.Sprintf("%s-%s", tenantName, name)
+
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
 			"kind":       "Namespace",
 			"metadata": map[string]interface{}{
-				"name": name,
+				"name": prefixedName,
 				"labels": map[string]interface{}{
 					"capsule.clastix.io/tenant": tenantName, // Ordnet den Namespace dem Tenant zu
 				},
@@ -56,7 +63,7 @@ func (m *Manager) CreateNamespace(ctx context.Context, name string, tenantName s
 
 	_, err := m.client.Resource(namespaceGVR).Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("fehler beim Erstellen des Namespaces %s: %w", name, err)
+		return fmt.Errorf("fehler beim Erstellen des Namespaces %s: %w", prefixedName, err)
 	}
 	return nil
 }
@@ -65,6 +72,10 @@ func (m *Manager) CreateNamespace(ctx context.Context, name string, tenantName s
 func (m *Manager) DeleteNamespace(ctx context.Context, name string) error {
 	err := m.client.Resource(namespaceGVR).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
+		if errors.IsNotFound(err) {
+			// Wir geben ein spezielles Präfix zurück, das der Handler erkennen kann
+			return fmt.Errorf("not_found: Namespace '%s' existiert nicht (hast du die echte K8s-ID verwendet?)", name)
+		}
 		return fmt.Errorf("fehler beim Löschen des Namespaces %s: %w", name, err)
 	}
 	return nil

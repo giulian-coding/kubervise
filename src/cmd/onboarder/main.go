@@ -89,5 +89,8 @@ func main() {
 	r.POST("/api/v1/namespaces/:namespaceName/networkpolicies", tenantHandler.CreateNetworkPolicy)
 	r.DELETE("/api/v1/namespaces/:namespaceName/networkpolicies/:policyName", tenantHandler.DeleteNetworkPolicy)
 
+	// --- CLI Ausführung ---
+	r.POST("/api/v1/cli/execute", tenantHandler.ExecuteCLICommand)
+
 	r.Run(":8080")
 }
